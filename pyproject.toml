@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "glassgem-analysis"
+version = "0.1.0"
+description = "GlassGEM waveform analysis (event catalog, I/O, spectrum helpers)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.23",
+    "tqdm>=4.0",
+]
+
+[project.optional-dependencies]
+catalog = ["lmfit>=1.2"]
+viz = ["matplotlib>=3.7"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+build-event-catalog = "modules.event_catalog:main"
+
+[tool.setuptools.packages.find]
+where = ["scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
