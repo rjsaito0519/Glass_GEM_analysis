@@ -1,7 +1,9 @@
 # conf — イベントカタログ用 JSON
 
-- **`event_catalog.default.json`** — `--conf` を付けずに実行したときに読むファイル。`run_dirs` を自分の環境用に編集する。
-- **`event_catalog.example.json`** — コピー用の同内容サンプル。
+- **`event_catalog.default.json`** — `--conf` を付けずに実行したときに読むファイル。
+- **`event_catalog.example.json`** — コピー用サンプル。
+
+run ディレクトリのリストは **JSON には含めない**。CLI の末尾引数 **`RUN_DIR` を 1 個以上** 渡す。
 
 未記載のキーは `modules/event_catalog.py` の `_DEFAULT_CATALOG_JSON` で補完される。
 
@@ -15,9 +17,8 @@
 
 ```bash
 cd /path/to/analysis
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my_runs.json
+PYTHONPATH=scripts python3 scripts/build_event_catalog.py /path/to/run1
+PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my.json /path/to/run1 /path/to/run2
 ```
 
-- `run_dirs` の相対パスは **その JSON ファイルがあるディレクトリ** を基準に解決する。
 - `output_root` が `null` または省略なら `analysis/results/`。

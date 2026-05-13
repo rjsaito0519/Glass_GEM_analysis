@@ -8,11 +8,11 @@
 
 ```bash
 cd /path/to/analysis
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my_runs.json
+PYTHONPATH=scripts python3 scripts/build_event_catalog.py /path/to/run1
+PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my.json /path/to/run1 /path/to/run2
 ```
 
-インストール時はコンソールスクリプト **`build-event-catalog`** でも起動可（`pyproject.toml`）。
+インストール時はコンソールスクリプト **`build-event-catalog`** でも起動可（`pyproject.toml`）。run は必ず末尾の **`RUN_DIR`** で渡す（conf には書かない）。
 
 詳細は [conf/README.md](../conf/README.md)（リポジトリ直下の `conf/`）。
 

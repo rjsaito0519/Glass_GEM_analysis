@@ -1,5 +1,4 @@
 {
-  "run_dirs": ["/path/to/run_root"],
   "output_root": null,
   "csv_subdir": "csv",
   "ggem_channel_id": 1,

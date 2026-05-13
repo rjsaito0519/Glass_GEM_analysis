@@ -1,6 +1,6 @@
 """全解析 CLI で共通する引数パターン。
 
-- 末尾の可変長 **RUN_DIR**: 1 個以上指定したときは設定の ``run_dirs`` を上書きする。
+- 末尾の可変長 **RUN_DIR**（1 個以上必須）: 処理対象の run データディレクトリ（conf には書かない）。
 - ``--conf PATH``: 既定以外の JSON 設定ファイル。
 - ``--debug``: 詳細ログや（設定に従う）波形デバッグ用。それ以外の挙動は JSON のみで渡す。
 """
@@ -12,8 +12,7 @@ from pathlib import Path
 
 
 STANDARD_CLI_EPILOG = (
-    "When one or more RUN_DIR paths are given, they replace run_dirs from the JSON config. "
-    "If none are given, the config must define a non-empty run_dirs list. "
+    "Provide one or more RUN_DIR paths (run data directories); they are not read from the JSON config. "
     "All other behavior is controlled via the config file (not extra CLI flags)."
 )
 
@@ -37,10 +36,10 @@ def add_standard_cli_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "run_dirs",
-        nargs="*",
+        nargs="+",
         type=Path,
         metavar="RUN_DIR",
-        help="Run data directory(ies); optional if run_dirs is set in the config file.",
+        help="One or more run data directories (required; not stored in the JSON config).",
     )
     if not parser.epilog:
         parser.epilog = STANDARD_CLI_EPILOG
