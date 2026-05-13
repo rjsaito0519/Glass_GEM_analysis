@@ -111,9 +111,12 @@ def _fit_gaussian_bin_integral_lmfit(
     counts: np.ndarray,
     edges: np.ndarray,
     n: int,
-) -> tuple[float, float | None, bool, str | None]:
-    """ビン積分ガウス（総度数 ``n`` 固定）を lmfit で当てはめ、``(μ, σ, 成功, 失敗理由)`` を返す。"""
-    from lmfit import Parameters, minimize
+) -> tuple[float, float | None, bool, str | None, Any]:
+    """ビン積分ガウス（総度数 ``n`` 固定）を lmfit で当てはめ、``(μ, σ, 成功, 失敗理由, MinimizerResult|None)`` を返す。
+
+    ``minimize`` が完了するたびに :func:`lmfit.fit_report` 相当の全文を標準エラーへ出す。
+    """
+    from lmfit import Parameters, fit_report, minimize
     from scipy.stats import norm
 
     d_lo = float(np.min(p))
@@ -140,8 +143,16 @@ def _fit_gaussian_bin_integral_lmfit(
 
     try:
         out = minimize(residual, pars, args=(counts, edges, n), method="leastsq")
-    except Exception:
-        return float(np.mean(p)), None, False, "minimize_exception"
+    except Exception as exc:
+        print(f"[baseline lmfit] minimize raised: {exc}", file=sys.stderr, flush=True)
+        return float(np.mean(p)), None, False, "minimize_exception", None
+
+    print(
+        "[baseline lmfit] bin-integral Gaussian (weighted residual), method=leastsq\n"
+        + fit_report(out),
+        file=sys.stderr,
+        flush=True,
+    )
 
     mu = float(out.params["mu"].value)
     sigma = float(out.params["sigma"].value)
@@ -154,9 +165,14 @@ def _fit_gaussian_bin_integral_lmfit(
         reason = str(getattr(out, "message", "fit_failed"))[:200]
 
     if not ok:
-        return float(np.mean(p)), None, False, reason or "fit_failed"
+        print(
+            f"[baseline lmfit] post-fit validation failed ({reason!r}); using sample mean fallback.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return float(np.mean(p)), None, False, reason or "fit_failed", out
 
-    return mu, sigma, True, None
+    return mu, sigma, True, None, out
 
 
 def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, Any]]:
@@ -169,6 +185,11 @@ def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, A
     stdev = float(np.std(p, ddof=1)) if n > 1 else None
 
     if n == 0:
+        print(
+            "[baseline lmfit] skipped: empty pool (no per-event outside-window means).",
+            file=sys.stderr,
+            flush=True,
+        )
         info: dict[str, Any] = {
             "method": "empty_pool",
             "n_per_event_means": 0,
@@ -188,6 +209,11 @@ def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, A
         return 0.0, info
 
     if n == 1:
+        print(
+            "[baseline lmfit] skipped: N=1 (no histogram / leastsq fit).",
+            file=sys.stderr,
+            flush=True,
+        )
         v0 = float(p[0])
         info = {
             "method": "single_event",
@@ -213,6 +239,11 @@ def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, A
     hist_lo, hist_hi = float(edges[0]), float(edges[-1])
 
     if n_bins < 2:
+        print(
+            "[baseline lmfit] skipped: histogram has fewer than 2 bins (no leastsq fit).",
+            file=sys.stderr,
+            flush=True,
+        )
         info = {
             "method": "histogram_lt2_bins_fallback_mean",
             "n_per_event_means": n,
@@ -231,7 +262,7 @@ def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, A
         }
         return mu_mean, info
 
-    mu_hat, sigma_hat, ok, fail_reason = _fit_gaussian_bin_integral_lmfit(p, counts, edges, n)
+    mu_hat, sigma_hat, ok, fail_reason, lm_out = _fit_gaussian_bin_integral_lmfit(p, counts, edges, n)
     rmse_about_mu_hat = float(np.sqrt(np.mean((p - mu_hat) ** 2)))
 
     if ok:
@@ -261,6 +292,10 @@ def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, A
         "gaussian_fit_sigma_source": sigma_src,
         "_hist_edges_for_png": edges,
     }
+    if lm_out is not None:
+        info["gaussian_fit_lmfit_chisqr"] = getattr(lm_out, "chisqr", None)
+        info["gaussian_fit_lmfit_redchi"] = getattr(lm_out, "redchi", None)
+        info["gaussian_fit_lmfit_nfev"] = getattr(lm_out, "nfev", None)
     return mu_out, info
 
 
@@ -795,6 +830,12 @@ def process_run_to_rows(
     }
     if "gaussian_fit_sample_mean_mv" in fit_info:
         bfit["gaussian_fit_sample_mean_mv"] = fit_info["gaussian_fit_sample_mean_mv"]
+    if fit_info.get("gaussian_fit_lmfit_chisqr") is not None:
+        bfit["lmfit_chisqr"] = fit_info["gaussian_fit_lmfit_chisqr"]
+    if fit_info.get("gaussian_fit_lmfit_redchi") is not None:
+        bfit["lmfit_redchi"] = fit_info["gaussian_fit_lmfit_redchi"]
+    if fit_info.get("gaussian_fit_lmfit_nfev") is not None:
+        bfit["lmfit_nfev"] = fit_info["gaussian_fit_lmfit_nfev"]
 
     meta: dict[str, Any] = {
         "run_dir": str(run_dir.resolve()),
