@@ -1,4 +1,4 @@
-"""1 run 分の GGEM 走査、ベースライン結合、イベント行・meta の構築。"""
+"""Build catalog rows for one run."""
 
 from __future__ import annotations
 
@@ -35,6 +35,11 @@ from modules.event_catalog_baseline import (
     baseline_gaussian_from_pool,
     save_baseline_pool_fit_png,
 )
+from modules.event_catalog_debug import (
+    CatalogDebugEvent,
+    make_debug_snapshot,
+    run_catalog_debug_browser,
+)
 
 
 def mean_voltage_outside_window_mv(
@@ -44,7 +49,7 @@ def mean_voltage_outside_window_mv(
     tmin_us: float,
     tmax_us: float,
 ) -> float | None:
-    """解析窓 ``[tmin_us, tmax_us]`` の外側サンプルにおける平均電圧 [mV]（イベント 1 個あたり 1 スカラー）。"""
+    """解析窓外サンプルの平均電圧 [mV]（窓外が無ければ None）。"""
     t = np.asarray(t_us, dtype=float)
     v = np.asarray(v_mv, dtype=float)
     m = (t < tmin_us) | (t > tmax_us)
@@ -54,7 +59,7 @@ def mean_voltage_outside_window_mv(
 
 
 def extract_timestamp_from_filename(path: Path, *, pattern: re.Pattern[str], fmt: str) -> datetime | None:
-    """ファイル名から正規表現でトークンを取り、``fmt`` で :class:`~datetime.datetime` にパースする。"""
+    """ファイル名から正規表現で時刻を取り出してパースする。"""
     m = pattern.search(path.name)
     if m is None:
         return None
@@ -72,7 +77,7 @@ def load_ggem_nim_paths(
     ggem_channel_id: int,
     nim_channel_id: int,
 ) -> tuple[list[Path], list[Path]] | None:
-    """run 直下の ``CH*`` から GGEM / NIM の波形 CSV 列（ソート済み）を取得する。"""
+    """run 内の GGEM / NIM 波形 CSV 列（ソート済み）を返す。"""
     channels = discover_channel_roots(run_dir, csv_subdir=csv_subdir)
     if not channels:
         return None
@@ -88,7 +93,7 @@ def load_ggem_nim_paths(
 
 
 def unique_result_subdir(output_root: Path, run_dir: Path, used: set[str]) -> Path:
-    """``output_root`` 配下に、run 名ベースで衝突しない結果サブディレクトリ名を確保して返す。"""
+    """結果出力用の衝突しないサブディレクトリを確保する。"""
     base = re.sub(r"[^\w\-.]+", "_", run_dir.name)[:80] or "run"
     cand = base
     i = 0
@@ -110,9 +115,8 @@ def compute_dt_ggem_nim_ns(
     *,
     edge_mv: float,
     nim_width_ns: float,
-    ggem_peak_minus_nim_fall: bool,
 ) -> float | None:
-    """同一イベントの GGEM 窓内最大時刻と NIM 落下推定時刻の差を ns で返す（符号は ``ggem_peak_minus_nim_fall``）。"""
+    """GGEM 窓内最大と NIM 落下の時刻差 [ns]。"""
     t_max_ggem = max_v_time_us(tw, vw_corr)
     if t_max_ggem is None:
         return None
@@ -130,60 +134,26 @@ def compute_dt_ggem_nim_ns(
     t_fall_nim = inferred_fall_time_us(t_na, v_na, v_th=edge_mv, nim_width_ns=nim_width_ns)
     if t_fall_nim is None:
         return None
-    dt_us = (
-        (float(t_max_ggem) - float(t_fall_nim))
-        if ggem_peak_minus_nim_fall
-        else (float(t_fall_nim) - float(t_max_ggem))
-    )
-    return float(dt_us * 1e3)
+    return float((float(t_max_ggem) - float(t_fall_nim)) * 1e3)
 
 
-_DEBUG_MATPLOTLIB_WARNED = False
+def _catalog_cell_mv(x: float) -> str:
+    """mV 列の CSV セル（nan は空）。"""
+    if x != x:
+        return ""
+    return f"{x:.3f}"
 
 
-def _catalog_debug_waveform_cap(cfg: dict[str, Any]) -> int | None:
-    """``debug_max_waveforms``: 正の整数 = 最大枚数、``None`` / 負 = 無制限、``0`` = プロットなし（ログのみ）。"""
-    v = cfg.get("debug_max_waveforms", 50)
-    if v is None:
-        return None
-    n = int(v)
-    return None if n < 0 else n
-
-
-def _debug_plot_waveform(out_path: Path, t_us: np.ndarray, v_mv: np.ndarray, *, title: str) -> bool:
-    """デバッグ用に 1 波形を PNG に保存する。matplotlib が無ければ ``False`` を返し一度だけ警告する。"""
-    global _DEBUG_MATPLOTLIB_WARNED
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        if not _DEBUG_MATPLOTLIB_WARNED:
-            print(
-                "[debug] matplotlib not installed; install viz extras: pip install 'glassgem-analysis[viz]'",
-                file=sys.stderr,
-                flush=True,
-            )
-            _DEBUG_MATPLOTLIB_WARNED = True
-        return False
-
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8.0, 3.0))
-    ax.plot(np.asarray(t_us, dtype=float), np.asarray(v_mv, dtype=float), lw=0.7)
-    ax.set_xlabel("Time [µs]")
-    ax.set_ylabel("Voltage [mV]")
-    ax.set_title(title, fontsize=9)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-    return True
+def _catalog_cell_dt_ns(dt_ns: float | None) -> str:
+    """``dt_ggem_nim_ns`` 列の CSV セル。"""
+    if dt_ns is None or not np.isfinite(dt_ns):
+        return ""
+    return f"{float(dt_ns):.12g}"
 
 
 @dataclass
 class EventCatalogRow:
-    """イベントカタログの 1 行（CSV 1 行と対応）。"""
+    """カタログ CSV の 1 行（CSV 列はすべて文字列、``file_index`` / ``spark`` のみ int）。"""
 
     run_num: str
     ggem_csv: str
@@ -191,20 +161,14 @@ class EventCatalogRow:
     file_index: int
     spark: int
     fft_is_noise: str
-    baseline_mv: float
-    integral_mv_us: float
-    vmax_mv: float
+    baseline_mv: str
+    baseline_indiv_mv: str
+    integral_mv_us: str
+    vmax_mv: str
     dt_ggem_nim_ns: str
 
     def as_csv_dict(self) -> dict[str, str]:
-        """CSV 書き込み用の文字列 dict（列名は ``modules.event_catalog_schema.CATALOG_CSV_COLUMNS`` に一致）。"""
-
-        def fmt_mv(x: float) -> str:
-            """mV 系セル用フォーマット（NaN は空文字）。"""
-            if x != x:
-                return ""
-            return f"{x:.12g}"
-
+        """CSV 行用の文字列 dict。"""
         return {
             "run_num": self.run_num,
             "ggem_csv": self.ggem_csv,
@@ -212,9 +176,10 @@ class EventCatalogRow:
             "file_index": str(self.file_index),
             "spark": str(self.spark),
             "fft_is_noise": self.fft_is_noise,
-            "baseline_mv": f"{self.baseline_mv:.12g}",
-            "integral_mv_us": fmt_mv(self.integral_mv_us),
-            "vmax_mv": fmt_mv(self.vmax_mv),
+            "baseline_mv": self.baseline_mv,
+            "baseline_indiv_mv": self.baseline_indiv_mv,
+            "integral_mv_us": self.integral_mv_us,
+            "vmax_mv": self.vmax_mv,
             "dt_ggem_nim_ns": self.dt_ggem_nim_ns,
         }
 
@@ -237,17 +202,10 @@ def process_run_to_rows(
     timestamp_format: str,
     edge_mv: float,
     nim_width_ns: float,
-    ggem_peak_minus_nim_fall: bool,
     baseline_png_path: Path | None = None,
     debug: bool = False,
-    debug_max_waveforms: int | None = 50,
-    debug_waveform_dir: Path | None = None,
 ) -> tuple[list[EventCatalogRow], dict[str, Any]]:
-    """1 run 分の GGEM CSV を走査し、ベースライン推定・特徴量付きの :class:`EventCatalogRow` 列と meta を構築する。
-
-    ``debug`` が真のときは各ファイルを標準エラーに出し、``debug_waveform_dir`` が与えられていれば
-    最大 ``debug_max_waveforms`` 枚まで GGEM 全レンジ波形を PNG に保存する（``None`` は無制限）。
-    """
+    """1 run 分を走査し、行リストと meta を返す。"""
     loaded = load_ggem_nim_paths(
         run_dir,
         csv_subdir,
@@ -258,13 +216,6 @@ def process_run_to_rows(
         return [], {"error": "no_ggem_paths"}
     ggem_paths, nim_paths = loaded
 
-    plot_waveforms = (
-        debug
-        and debug_waveform_dir is not None
-        and (debug_max_waveforms is None or debug_max_waveforms > 0)
-    )
-    n_debug_plots = 0
-
     per_event_mean_outside: list[float] = []
     skipped_read_pool = 0
     for fp in tqdm(
@@ -274,8 +225,6 @@ def process_run_to_rows(
         file=sys.stderr,
         mininterval=0.2,
     ):
-        if debug:
-            print(f"[debug] baseline scan {fp}", file=sys.stderr, flush=True)
         try:
             t_us, v_mv = read_waveform_csv(fp)
         except Exception as exc:
@@ -305,6 +254,7 @@ def process_run_to_rows(
         )
 
     rows: list[EventCatalogRow] = []
+    debug_events: list[CatalogDebugEvent] = []
     skipped_read_catalog = 0
     skipped_window = 0
     n_spark = 0
@@ -321,8 +271,6 @@ def process_run_to_rows(
             mininterval=0.2,
         )
     ):
-        if debug:
-            print(f"[debug] catalog k={k} {fp}", file=sys.stderr, flush=True)
         ggem_name = fp.name
         ts = extract_timestamp_from_filename(fp, pattern=timestamp_pattern, fmt=timestamp_format)
         ts_str = ts.isoformat(sep=" ", timespec="seconds") if ts is not None else ""
@@ -340,23 +288,42 @@ def process_run_to_rows(
                     file_index=k,
                     spark=0,
                     fft_is_noise="",
-                    baseline_mv=center_run_mv,
-                    integral_mv_us=float("nan"),
-                    vmax_mv=float("nan"),
+                    baseline_mv=_catalog_cell_mv(center_run_mv),
+                    baseline_indiv_mv="",
+                    integral_mv_us="",
+                    vmax_mv="",
                     dt_ggem_nim_ns="",
                 )
             )
+            if debug:
+                debug_events.append(
+                    make_debug_snapshot(
+                        k=k,
+                        ggem_name=ggem_name,
+                        ts_str=ts_str,
+                        t_ggem_us=np.array([]),
+                        v_ggem_mv=np.array([]),
+                        nim_paths=nim_paths,
+                        tmin_us=tmin_us,
+                        tmax_us=tmax_us,
+                        center_run_mv=center_run_mv,
+                        edge_mv=edge_mv,
+                        nim_width_ns=nim_width_ns,
+                        spark=False,
+                        fft_is_noise="",
+                        dt_ggem_nim_ns="",
+                        subtract_mean_fft=subtract_mean_for_fft,
+                        rel_tol_dt=rel_tol_dt,
+                        noise_dominant_peak_min_hz=noise_dominant_peak_min_hz,
+                        read_error=str(exc),
+                    )
+                )
             continue
 
-        if plot_waveforms and (
-            debug_max_waveforms is None or n_debug_plots < debug_max_waveforms
-        ):
-            assert debug_waveform_dir is not None
-            stem = re.sub(r"[^\w\-.]+", "_", fp.name)[:100]
-            outp = debug_waveform_dir / f"{k:06d}_{stem}.png"
-            title_png = f"{run_num}  {fp.name}  k={k}"
-            if _debug_plot_waveform(outp, t_us, v_mv, title=title_png):
-                n_debug_plots += 1
+        m_out_csv = mean_voltage_outside_window_mv(t_us, v_mv, tmin_us=tmin_us, tmax_us=tmax_us)
+        baseline_indiv_mv = (
+            float(m_out_csv) if m_out_csv is not None else float("nan")
+        )
 
         spark = is_spark_event(
             t_us,
@@ -378,12 +345,35 @@ def process_run_to_rows(
                     file_index=k,
                     spark=int(spark),
                     fft_is_noise="",
-                    baseline_mv=center_run_mv,
-                    integral_mv_us=float("nan"),
-                    vmax_mv=float("nan"),
+                    baseline_mv=_catalog_cell_mv(center_run_mv),
+                    baseline_indiv_mv=_catalog_cell_mv(baseline_indiv_mv),
+                    integral_mv_us="",
+                    vmax_mv="",
                     dt_ggem_nim_ns="",
                 )
             )
+            if debug:
+                debug_events.append(
+                    make_debug_snapshot(
+                        k=k,
+                        ggem_name=ggem_name,
+                        ts_str=ts_str,
+                        t_ggem_us=t_us,
+                        v_ggem_mv=v_mv,
+                        nim_paths=nim_paths,
+                        tmin_us=tmin_us,
+                        tmax_us=tmax_us,
+                        center_run_mv=center_run_mv,
+                        edge_mv=edge_mv,
+                        nim_width_ns=nim_width_ns,
+                        spark=bool(spark),
+                        fft_is_noise="",
+                        dt_ggem_nim_ns="",
+                        subtract_mean_fft=subtract_mean_for_fft,
+                        rel_tol_dt=rel_tol_dt,
+                        noise_dominant_peak_min_hz=noise_dominant_peak_min_hz,
+                    )
+                )
             continue
 
         vw_c = np.asarray(vw, dtype=float) - center_run_mv
@@ -423,10 +413,8 @@ def process_run_to_rows(
                 k,
                 edge_mv=edge_mv,
                 nim_width_ns=nim_width_ns,
-                ggem_peak_minus_nim_fall=ggem_peak_minus_nim_fall,
             )
-        dt_str = "" if dt_ns is None or not np.isfinite(dt_ns) else f"{float(dt_ns):.12g}"
-
+        dt_str = _catalog_cell_dt_ns(dt_ns)
         rows.append(
             EventCatalogRow(
                 run_num=run_num,
@@ -435,21 +423,40 @@ def process_run_to_rows(
                 file_index=k,
                 spark=int(spark),
                 fft_is_noise=fft_lab,
-                baseline_mv=center_run_mv,
-                integral_mv_us=integral_bc,
-                vmax_mv=vmax_bc,
+                baseline_mv=_catalog_cell_mv(center_run_mv),
+                baseline_indiv_mv=_catalog_cell_mv(baseline_indiv_mv),
+                integral_mv_us=_catalog_cell_mv(float(integral_bc)),
+                vmax_mv=_catalog_cell_mv(vmax_bc),
                 dt_ggem_nim_ns=dt_str,
             )
         )
+        if debug:
+            debug_events.append(
+                make_debug_snapshot(
+                    k=k,
+                    ggem_name=ggem_name,
+                    ts_str=ts_str,
+                    t_ggem_us=t_us,
+                    v_ggem_mv=v_mv,
+                    nim_paths=nim_paths,
+                    tmin_us=tmin_us,
+                    tmax_us=tmax_us,
+                    center_run_mv=center_run_mv,
+                    edge_mv=edge_mv,
+                    nim_width_ns=nim_width_ns,
+                    spark=bool(spark),
+                    fft_is_noise=fft_lab,
+                    dt_ggem_nim_ns=dt_str,
+                    subtract_mean_fft=subtract_mean_for_fft,
+                    rel_tol_dt=rel_tol_dt,
+                    noise_dominant_peak_min_hz=noise_dominant_peak_min_hz,
+                )
+            )
+
+    if debug:
+        run_catalog_debug_browser(debug_events, run_num=run_num)
 
     bfit: dict[str, Any] = {
-        "reference": (
-            "Baseline = lmfit GaussianModel center fit to a Freedman–Diaconis histogram of per-event "
-            "mean voltages outside the analysis window [mV] (bin centers vs counts; guess() for inits). "
-            "On failure or fewer than five histogram bins, falls back to the sample mean. "
-            "CSV baseline_mv is the fitted center (or fallback mean). sigma_mV is the fit σ when "
-            "fit_success; otherwise None (center is still the sample mean on fit failure)."
-        ),
         "model": fit_info.get("gaussian_fit_model"),
         "method": fit_info.get("method"),
         "center_mV": center_run_mv,
@@ -488,25 +495,14 @@ def process_run_to_rows(
         "baseline_gaussian_fit": bfit,
         "center_run_mv": center_run_mv,
         "sigma_mle_mv": fit_info.get("gaussian_fit_sigma_mv"),
-        "baseline_meta_note": (
-            "center_run_mv matches baseline_gaussian_fit.center_mV (fitted center or fallback mean). "
-            "sigma_mle_mv matches baseline_gaussian_fit.sigma_mV (legacy key name: fit σ when "
-            "fit_success, otherwise None)."
-        ),
         "baseline_fit_method": fit_info.get("method"),
         "baseline_fit_png": baseline_png_path.name if baseline_png_path is not None else None,
         "n_baseline_per_event_means": fit_info.get("n_per_event_means", 0),
-        "baseline_from_per_event_outside_mean": True,
         "ggem_channel_id": ggem_channel_id,
         "nim_channel_id": nim_channel_id,
         "nim_paths_count": len(nim_paths),
         "edge_mv": edge_mv,
         "nim_width_ns": nim_width_ns,
-        "dt_nim_fall_minus_ggem_peak": (not ggem_peak_minus_nim_fall),
-        "dt_definition": "t_max_ggem_window_minus_t_fall_nim_ns"
-        if ggem_peak_minus_nim_fall
-        else "t_fall_nim_minus_t_max_ggem_window_ns",
-        "missing_value_encoding": "empty_string_means_nan",
         "n_ggem_files": len(ggem_paths),
         "skipped_read_pool_scan": skipped_read_pool,
         "skipped_read_catalog_scan": skipped_read_catalog,
@@ -516,11 +512,6 @@ def process_run_to_rows(
         "n_fft_noise": n_fft_noise,
         "n_fft_unknown_non_spark": n_fft_unknown,
         "cli_debug": debug,
-        "debug_max_waveforms": debug_max_waveforms if debug else None,
-        "debug_waveform_png_count": n_debug_plots if debug else 0,
-        "debug_waveform_dir": str(debug_waveform_dir.resolve())
-        if debug and debug_waveform_dir is not None
-        else None,
     }
     n_ev_baseline = int(fit_info.get("n_per_event_means", 0))
     sig_s = fit_info.get("gaussian_fit_sigma_mv")

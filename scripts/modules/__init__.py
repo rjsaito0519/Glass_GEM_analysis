@@ -1,4 +1,4 @@
-"""解析用の共通関数（`common`）、CLI 共通（`cli_common`）、イベントカタログ（`event_catalog`）。"""
+"""Public exports for ``PYTHONPATH=scripts`` workflows."""
 
 from modules.cli_common import STANDARD_CLI_EPILOG, add_standard_cli_arguments
 from modules.common import (

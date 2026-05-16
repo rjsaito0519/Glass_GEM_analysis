@@ -1,4 +1,4 @@
-"""波形解析用の共通関数（CSV・run レイアウト・窓・スパーク・スペクトル・窓内積分・交差）。"""
+"""Shared waveform helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 
-# --- CSV I/O (s, V) -> (us, mV) -------------------------------------------------
 DEFAULT_SKIP_HEADER_ROWS = 1
 S_TO_US = 1e6
 V_TO_MV = 1e3
@@ -39,7 +38,6 @@ def read_waveform_csv(
     return t_s * S_TO_US, v_v * V_TO_MV
 
 
-# --- Run ディレクトリレイアウト -------------------------------------------------
 _CH_DIR_RE = re.compile(r"^CH(\d+)$", re.IGNORECASE)
 _NUM_IN_STEM = re.compile(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?")
 
@@ -78,6 +76,7 @@ def aligned_csv_paths(
     *,
     csv_subdir: str = "csv",
 ) -> tuple[list[tuple[int, Path, list[Path]]], int]:
+    """チャネルごとの CSV 列と、揃えたイベント数を返す。"""
     per_ch: list[tuple[int, Path, list[Path]]] = []
     for ch_id, root in channel_roots:
         csv_dir = root / csv_subdir
@@ -87,7 +86,6 @@ def aligned_csv_paths(
     return per_ch, n_events
 
 
-# --- ピーク ----------------------------------------------------------------------
 def time_and_max(t: np.ndarray, v: np.ndarray) -> tuple[float, float]:
     """最大 ``v`` の時刻と値（同値なら先頭のインデックス）。"""
     if t.size == 0 or v.size == 0:
@@ -97,7 +95,6 @@ def time_and_max(t: np.ndarray, v: np.ndarray) -> tuple[float, float]:
     return float(t[i]), float(v[i])
 
 
-# --- 窓・スパーク ----------------------------------------------------------------
 def window_arrays(
     t_us: np.ndarray,
     v_mv: np.ndarray,
@@ -105,6 +102,7 @@ def window_arrays(
     tmin_us: float,
     tmax_us: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """``[tmin_us, tmax_us]`` 内のサンプルを切り出す。"""
     mask = (t_us >= tmin_us) & (t_us <= tmax_us)
     return t_us[mask], v_mv[mask]
 
@@ -147,50 +145,40 @@ def is_spark_event(
     return float(n_above) * float(sample_dt_us) >= float(min_duration_us)
 
 
-# --- スペクトル（Hann + 片側 PSD）------------------------------------------------
 def one_sided_psd_m2_per_hz(
     v_mv: np.ndarray,
     *,
     fs_hz: float,
     subtract_mean: bool,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """実信号の片側パワースペクトル密度（入力単位の二乗 / Hz）。
-
-    Hann 窓で端の不連続によるスペクトル漏れを抑え、窓の二乗和でスケールして
-    ``|X[k]|^2`` を物理的な PSD に近づける。平均除去は DC およびその近傍への
-    リークを抑える用途（``subtract_mean``）。
-
-    ``rfft`` は非負の周波数ビンのみ。片側 PSD では内部ビンに係数 2 を掛け、
-    負の周波数側のパワーを折り畳む。DC とナイキスト（偶数長の最終ビン）は
-    折り畳みの対がないため係数 1 のまま。
-    """
+    """One-sided PSD (power per Hz); Hann window, optional mean removal."""
     n = int(v_mv.size)
     if n < 4:
         return None
-    w = np.hanning(n)  # 両端を 0 に近づけ、切り出し端のギクシャクを緩和
+    w = np.hanning(n)
     x = np.asarray(v_mv, dtype=float).copy()
     if subtract_mean:
-        x -= float(np.mean(x))  # 定数オフセット（0 Hz）を弱める
+        x -= float(np.mean(x))
     x *= w
-    win_energy = float(np.sum(w * w))  # 窓による振幅減衰の補正に使うエネルギー
+    win_energy = float(np.sum(w * w))
     if win_energy <= 0.0 or fs_hz <= 0.0:
         return None
     spec = np.fft.rfft(x)
-    # 片側 PSD: 窓付き周期図を fs と窓エネルギーで正規化（単位: (入力)^2/Hz）
     scale = 1.0 / (fs_hz * win_energy)
     psd = np.zeros(spec.shape[0], dtype=float)
-    psd[0] = float(np.abs(spec[0]) ** 2) * scale  # DC: 折り畳みなし
+    psd[0] = float(np.abs(spec[0]) ** 2) * scale
     if n % 2 == 0:
         if spec.size > 2:
-            psd[1:-1] = 2.0 * (np.abs(spec[1:-1]) ** 2) * scale  # 内部: 負側を足す
-        psd[-1] = float(np.abs(spec[-1]) ** 2) * scale  # ナイキスト: 折り畳みなし
+            psd[1:-1] = 2.0 * (np.abs(spec[1:-1]) ** 2) * scale
+        psd[-1] = float(np.abs(spec[-1]) ** 2) * scale
     else:
-        psd[1:] = 2.0 * (np.abs(spec[1:]) ** 2) * scale  # 奇数長: 最終ビンはナイキスト外
+        psd[1:] = 2.0 * (np.abs(spec[1:]) ** 2) * scale
     freq_hz = np.fft.rfftfreq(n, d=1.0 / fs_hz)
     return freq_hz, psd
 
 
 def dominant_peak_freq_hz_excluding_dc(freq_hz: np.ndarray, psd: np.ndarray) -> float | None:
+    """DC 除く PSD の最大ピーク周波数 [Hz]。"""
     if freq_hz.size < 2 or psd.size < 2:
         return None
     sub = psd[1:]
@@ -209,6 +197,7 @@ def fft_is_noise_label(
     rel_tol_dt: float,
     subtract_mean_for_fft: bool,
 ) -> bool | None:
+    """窓内波形がノイズ優位か（True=ノイズ、None=判定不能）。"""
     sample_dt_us = dt_us(tw, rel_tol=rel_tol_dt)
     if sample_dt_us is None or tw.size < 4:
         return None
@@ -223,8 +212,8 @@ def fft_is_noise_label(
     return bool(f_dom >= noise_dominant_peak_min_hz)
 
 
-# --- しきい値交差・整列 ----------------------------------------------------------
 def _interp_cross_time(t: np.ndarray, v: np.ndarray, i: int, v_th: float) -> float:
+    """区間 ``[i, i+1]`` で ``v_th`` を線形補間した時刻。"""
     t0, t1 = float(t[i]), float(t[i + 1])
     v0, v1 = float(v[i]), float(v[i + 1])
     if v1 == v0:
@@ -235,6 +224,7 @@ def _interp_cross_time(t: np.ndarray, v: np.ndarray, i: int, v_th: float) -> flo
 
 
 def _first_falling_crossing_us(t: np.ndarray, v: np.ndarray, v_th: float) -> float | None:
+    """``v_th`` を下向きにまたぐ最初の時刻 [µs]。"""
     v = np.asarray(v, dtype=float)
     t = np.asarray(t, dtype=float)
     for i in range(v.size - 1):
@@ -244,6 +234,7 @@ def _first_falling_crossing_us(t: np.ndarray, v: np.ndarray, v_th: float) -> flo
 
 
 def _first_rising_crossing_us(t: np.ndarray, v: np.ndarray, v_th: float) -> float | None:
+    """``v_th`` を上向きにまたぐ最初の時刻 [µs]。"""
     v = np.asarray(v, dtype=float)
     t = np.asarray(t, dtype=float)
     for i in range(v.size - 1):
@@ -292,6 +283,7 @@ def align_pair(
     t2: np.ndarray,
     v2: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """2 本の波形を先頭から同長に揃える。"""
     n = min(int(t1.size), int(t2.size), int(v1.size), int(v2.size))
     if n < 2:
         return None

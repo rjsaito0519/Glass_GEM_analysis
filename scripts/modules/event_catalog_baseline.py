@@ -1,4 +1,4 @@
-"""窓外平均プールの FD ヒスト + lmfit ガウス（center）による run ベースラインと PNG 出力。"""
+"""Run-wide baseline (histogram + lmfit) and optional PNG."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 
 
 def _finite_float_or_none(x: Any) -> float | None:
-    """任意値を有限の float に正規化し、不可なら ``None``。"""
+    """有限 float に正規化し、不可なら None。"""
     if x is None:
         return None
     try:
@@ -21,7 +21,7 @@ def _finite_float_or_none(x: Any) -> float | None:
 
 
 def _require_lmfit() -> None:
-    """lmfit が無い場合は分かりやすい :exc:`ImportError` を出す。"""
+    """lmfit 未導入なら ImportError。"""
     try:
         import lmfit  # noqa: F401
     except ImportError as e:
@@ -32,7 +32,7 @@ def _require_lmfit() -> None:
 
 
 def _baseline_histogram_edges_counts(p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Freedman–Diaconis ビン境界でヒストグラムを返す ``(counts, edges)``。"""
+    """FD ビンでヒストグラム ``(counts, edges)`` を返す。"""
     p = np.asarray(p, dtype=np.float64)
     p = p[np.isfinite(p)]
     if p.size == 0:
@@ -56,10 +56,7 @@ def _fit_gaussian_histogram_lmfit(
     counts: np.ndarray,
     edges: np.ndarray,
 ) -> tuple[float, float | None, bool, str | None, Any]:
-    """ヒスト（ビン中心 ``x``、度数 ``y``）に :class:`lmfit.models.GaussianModel` を当てはめる。
-
-    初期値は ``model.guess(y, x=x)``。成功時は ``fit_report`` を標準エラーへ出す。
-    """
+    """ヒストに GaussianModel を当てはめ center・sigma を返す。"""
     from lmfit.models import GaussianModel
 
     x = 0.5 * (edges[:-1] + edges[1:])
@@ -114,7 +111,7 @@ def _fit_gaussian_histogram_lmfit(
 
 
 def baseline_gaussian_from_pool(pool_mv: np.ndarray) -> tuple[float, dict[str, Any]]:
-    """窓外平均 [mV] のプールについて FD ヒスト + ``GaussianModel``（``guess`` 初期値）で **center** を推定する（失敗時は算術平均）。"""
+    """窓外平均プールから run ベースライン [mV] と fit 情報を返す。"""
     p = np.asarray(pool_mv, dtype=np.float64)
     p = p[np.isfinite(p)]
     n = int(p.size)
@@ -246,104 +243,104 @@ def save_baseline_pool_fit_png(
     tmin_us: float,
     tmax_us: float,
 ) -> None:
-    """フィットと同一の ``hist_edges`` でヒストを描き、当てはめた center・sigma をガウス曲線で重ねる。
-
-    横軸表示範囲は ``center ± 3σ``（フィット σ。無いときは RMSE 幅。縦線のみのときは ``± max(3·std(pool), 0.5)`` mV）。
-    """
+    """プールヒストとガウス曲線を PNG に保存する。"""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from scipy.stats import norm
 
+    from modules.project_matplotlib_rc import MPL_RC
+
     p = np.asarray(pool_mv, dtype=np.float64)
     p = p[np.isfinite(p)]
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(1, 1, figsize=(9, 4.8))
-    if p.size == 0:
-        ax.text(
-            0.5,
-            0.5,
-            "No per-event outside-window means\n(baseline = 0 mV; empty pool)",
-            ha="center",
-            va="center",
-            transform=ax.transAxes,
-            fontsize=12,
-        )
-        ax.set_title(f"{run_num}  |  Baseline pool (empty)  |  window [{tmin_us:g}, {tmax_us:g}] µs")
-    elif p.size == 1:
-        v0 = float(p[0])
-        ax.axvline(v0, color="C3", lw=2.0, label=rf"center={v0:.5g} mV (N=1)")
-        ax.set_xlim(v0 - 1.0, v0 + 1.0)
-        ax.set_xlabel("Mean voltage [mV] outside window (one value per GGEM CSV)")
-        ax.set_ylabel("Counts per bin")
-        ax.legend(loc="upper right", fontsize=9)
-        ax.set_title(
-            f"{run_num}  |  Baseline pool (N=1)  |  window [{tmin_us:g}, {tmax_us:g}] µs"
-        )
-    else:
-        n_ev = int(p.size)
-        edges = hist_edges
-        if edges is None or edges.size < 2 or not np.all(np.isfinite(edges)):
-            _, edges = _baseline_histogram_edges_counts(p)
-        counts, edges = np.histogram(p, bins=edges)
-        n_bins = int(counts.size)
-        x_lo, x_hi = float(edges[0]), float(edges[-1])
-        bin_w = (x_hi - x_lo) / float(max(n_bins, 1))
-        c = float(center_fit_mv)
-
-        ax.hist(
-            p,
-            bins=edges,
-            color="0.82",
-            edgecolor="0.45",
-            linewidth=0.25,
-            label="Per-event mean mV (outside window), counts",
-        )
-
-        sigma = sigma_fit_mv
-        sigma_rmse = float(np.sqrt(np.mean((p - c) ** 2)))
-        if sigma is not None and np.isfinite(sigma) and float(sigma) > 1e-12:
-            sigma_3 = float(sigma)
-            plot_lo, plot_hi = c - 3.0 * sigma_3, c + 3.0 * sigma_3
-            xx = np.linspace(plot_lo, plot_hi, max(200, n_bins * 8))
-            yy = n_ev * bin_w * norm.pdf(xx, loc=c, scale=sigma_3)
-            ax.plot(
-                xx,
-                yy,
-                color="C3",
-                lw=2.0,
-                label=rf"Gaussian fit (center={c:.5g}, $\sigma$={sigma_3:.5g} mV)",
+    with plt.rc_context(MPL_RC):
+        fig, ax = plt.subplots(1, 1, figsize=(9, 7))
+        if p.size == 0:
+            ax.text(
+                0.5,
+                0.5,
+                "No per-event outside-window means\n(baseline = 0 mV; empty pool)",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=12,
             )
-        elif sigma_rmse > 1e-12:
-            sigma_3 = sigma_rmse
-            plot_lo, plot_hi = c - 3.0 * sigma_3, c + 3.0 * sigma_3
-            xx = np.linspace(plot_lo, plot_hi, max(200, n_bins * 8))
-            yy = n_ev * bin_w * norm.pdf(xx, loc=c, scale=sigma_rmse)
-            ax.plot(
-                xx,
-                yy,
-                color="C3",
-                lw=2.0,
-                label=rf"RMSE width ($\sigma$={sigma_rmse:.5g} mV)",
+            ax.set_title(f"{run_num}  |  Baseline pool (empty)  |  window [{tmin_us:g}, {tmax_us:g}] µs")
+        elif p.size == 1:
+            v0 = float(p[0])
+            ax.axvline(v0, color="C3", lw=2.0, label=rf"center={v0:.5g} mV (N=1)")
+            ax.set_xlim(v0 - 1.0, v0 + 1.0)
+            ax.set_xlabel("Mean voltage [mV] outside window (one value per GGEM CSV)")
+            ax.set_ylabel("Counts per bin")
+            ax.legend(loc="upper right", fontsize=9)
+            ax.set_title(
+                f"{run_num}  |  Baseline pool (N=1)  |  window [{tmin_us:g}, {tmax_us:g}] µs"
             )
         else:
-            ps = float(np.std(p)) if p.size > 1 else 0.0
-            half = max(3.0 * ps, 0.5)
-            plot_lo, plot_hi = c - half, c + half
-            ax.axvline(c, color="C3", lw=2.0, label=rf"center={c:.5g} mV")
+            n_ev = int(p.size)
+            edges = hist_edges
+            if edges is None or edges.size < 2 or not np.all(np.isfinite(edges)):
+                _, edges = _baseline_histogram_edges_counts(p)
+            counts, edges = np.histogram(p, bins=edges)
+            n_bins = int(counts.size)
+            x_lo, x_hi = float(edges[0]), float(edges[-1])
+            bin_w = (x_hi - x_lo) / float(max(n_bins, 1))
+            c = float(center_fit_mv)
 
-        ax.set_xlim(plot_lo, plot_hi)
-        ax.set_xlabel("Mean voltage [mV] outside window (one value per GGEM CSV)")
-        ax.set_ylabel("Counts per bin")
-        ax.legend(loc="upper right", fontsize=9)
-        ax.set_title(
-            f"{run_num}  |  Baseline ({method})  |  window [{tmin_us:g}, {tmax_us:g}] µs  "
-            f"|  N_events={n_ev}  |  bins={n_bins}"
-        )
+            ax.hist(
+                p,
+                bins=edges,
+                color="0.82",
+                edgecolor="0.45",
+                linewidth=0.25,
+                label="Per-event mean mV (outside window), counts",
+            )
 
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=300)
-    plt.close(fig)
+            sigma = sigma_fit_mv
+            sigma_rmse = float(np.sqrt(np.mean((p - c) ** 2)))
+            if sigma is not None and np.isfinite(sigma) and float(sigma) > 1e-12:
+                sigma_3 = float(sigma)
+                plot_lo, plot_hi = c - 3.0 * sigma_3, c + 3.0 * sigma_3
+                xx = np.linspace(plot_lo, plot_hi, max(200, n_bins * 8))
+                yy = n_ev * bin_w * norm.pdf(xx, loc=c, scale=sigma_3)
+                ax.plot(
+                    xx,
+                    yy,
+                    color="C3",
+                    lw=2.0,
+                    label=rf"Gaussian fit (center={c:.5g}, $\sigma$={sigma_3:.5g} mV)",
+                )
+            elif sigma_rmse > 1e-12:
+                sigma_3 = sigma_rmse
+                plot_lo, plot_hi = c - 3.0 * sigma_3, c + 3.0 * sigma_3
+                xx = np.linspace(plot_lo, plot_hi, max(200, n_bins * 8))
+                yy = n_ev * bin_w * norm.pdf(xx, loc=c, scale=sigma_rmse)
+                ax.plot(
+                    xx,
+                    yy,
+                    color="C3",
+                    lw=2.0,
+                    label=rf"RMSE width ($\sigma$={sigma_rmse:.5g} mV)",
+                )
+            else:
+                ps = float(np.std(p)) if p.size > 1 else 0.0
+                half = max(3.0 * ps, 0.5)
+                plot_lo, plot_hi = c - half, c + half
+                ax.axvline(c, color="C3", lw=2.0, label=rf"center={c:.5g} mV")
+
+            ax.set_xlim(plot_lo, plot_hi)
+            ax.set_xlabel("Mean voltage [mV]")
+            ax.set_ylabel("Counts per bin")
+            ax.legend(loc="upper right", fontsize=9)
+            ax.set_title(
+                f"{run_num}  |  Baseline ({method})  |  window [{tmin_us:g}, {tmax_us:g}] µs  "
+                f"|  N_events={n_ev}  |  bins={n_bins}"
+            )
+
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=300)
+        plt.close(fig)

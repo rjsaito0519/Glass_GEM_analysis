@@ -1,6 +1,4 @@
 {
-  "output_root": null,
-  "csv_subdir": "csv",
   "ggem_channel_id": 1,
   "nim_channel_id": 2,
   "tmin_us": -0.5,
@@ -8,13 +6,6 @@
   "spark_threshold_mv": 300.0,
   "spark_min_duration_us": 0.5,
   "noise_dominant_peak_min_mhz": 2.0,
-  "rel_tol_dt": 0.02,
-  "subtract_mean_fft": true,
-  "timestamp_regex": "(\\d{8}_\\d{6})",
-  "timestamp_format": "%Y%m%d_%H%M%S",
   "edge_mv": -400.0,
-  "nim_width_ns": 13.73,
-  "dt_nim_fall_minus_ggem_peak": false,
-  "baseline_png": true,
-  "debug_max_waveforms": 50
+  "nim_width_ns": 13.73
 }

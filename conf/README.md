@@ -1,24 +1,27 @@
-# conf — イベントカタログ用 JSON
+# conf — イベントカタログ
 
-- **`event_catalog.default.json`** — `--conf` を付けずに実行したときに読むファイル。
-- **`event_catalog.example.json`** — コピー用サンプル。
+- **`event_catalog.default.json`** — `--conf` 省略時に読む設定（実験ごとに変えたい項目のみ記載）。
+- 未記載のキーは `scripts/modules/event_catalog.py` の `_DEFAULT_CATALOG_JSON` で補完される。
 
-run ディレクトリのリストは **JSON には含めない**。CLI の末尾引数 **`RUN_DIR` を 1 個以上** 渡す。
+`RUN_DIR` は JSON には書かず、CLI 末尾に 1 個以上渡す。
 
-未記載のキーは `modules/event_catalog.py` の `_DEFAULT_CATALOG_JSON` で補完される。
+## 既定 JSON に含める項目
 
-主なキー（用語）:
+| キー | 意味 |
+|------|------|
+| `ggem_channel_id` | 主波形 `CH{n}/csv/` |
+| `nim_channel_id` | NIM 波形 `CH{n}/csv/` |
+| `tmin_us` / `tmax_us` | 解析窓 [µs] |
+| `spark_threshold_mv` / `spark_min_duration_us` | スパーク判定 |
+| `noise_dominant_peak_min_mhz` | FFT ノイズ判定のピークしきい [MHz] |
+| `edge_mv` / `nim_width_ns` | NIM 立下り・立上り推定 |
 
-- **`ggem_channel_id`** — カタログの主波形（従来の CH1 相当）。`CH{番号}/csv/` を参照。
-- **`nim_channel_id`** — NIM ロジック側波形（従来の CH2 相当）。`dt_ggem_nim_ns` の落下時刻に使用。
-- **`dt_nim_fall_minus_ggem_peak`** — `true` のとき Δt は「NIM 落下 − GGEM 窓内最大時刻」方向（ns）。旧キー `dt_fall_minus_ch1_peak` も読み込み時に引き継がれる。
+## コード側の既定のみ（必要なら `--conf` で上書き可）
 
-出力 CSV の主な列: `run_num`（run 識別子）、`ggem_csv`、`baseline_mv`（窓内減算に使う run 全体ベースライン [mV]）、`dt_ggem_nim_ns` など。成果物のファイル名は `event_catalog.csv` / `event_catalog.meta.json` / `event_catalog_baseline.png`（既定）。
+`output_root`（省略時 `analysis/results/`）、`csv_subdir`、`rel_tol_dt`、`subtract_mean_fft`、`timestamp_regex`、`timestamp_format`、`baseline_png`
 
 ```bash
 cd /path/to/analysis
 PYTHONPATH=scripts python3 scripts/build_event_catalog.py /path/to/run1
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my.json /path/to/run1 /path/to/run2
+PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my.json /path/to/run1
 ```
-
-- `output_root` が `null` または省略なら `analysis/results/`。
