@@ -22,6 +22,6 @@
 
 ```bash
 cd /path/to/analysis
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py /path/to/run1
-PYTHONPATH=scripts python3 scripts/build_event_catalog.py --conf conf/my.json /path/to/run1
+PYTHONPATH=scripts python3 scripts/decode_event_catalog.py /path/to/run1
+PYTHONPATH=scripts python3 scripts/decode_event_catalog.py --conf conf/my.json /path/to/run1
 ```
