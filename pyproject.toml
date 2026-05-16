@@ -19,6 +19,7 @@ dev = ["pytest>=7"]
 
 [project.scripts]
 decode-event-catalog = "modules.event_catalog:main"
+check-waveform = "modules.check_waveform_viewer:main"
 
 [tool.setuptools.packages.find]
 where = ["scripts"]
