@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
 
 from modules.common import aligned_csv_paths, discover_channel_roots, read_waveform_csv
+
+_CATALOG_META_NAME = "event_catalog.meta.json"
 
 PerChannelCsv = list[tuple[int, Path, list[Path]]]
 TraceSeries = list[tuple[int, list[tuple[Path, np.ndarray, np.ndarray]]]]
@@ -49,16 +52,60 @@ def step_start_index(idx: int, delta: int, n_events: int, overlay_n: int) -> int
     return starts[(i + delta) % len(starts)]
 
 
+def _analysis_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def find_catalog_meta_path(run_dir: Path) -> Path | None:
+    """decode 成果物の ``event_catalog.meta.json`` を探す。"""
+    run_dir = run_dir.resolve()
+    direct = run_dir / _CATALOG_META_NAME
+    if direct.is_file():
+        return direct
+    under_results = _analysis_root() / "results" / run_dir.name / _CATALOG_META_NAME
+    if under_results.is_file():
+        return under_results
+    return None
+
+
+def load_decode_baseline(run_dir: Path) -> tuple[float, int]:
+    """解析で使った run ベースライン [mV] と GGEM チャネル ID。"""
+    meta_path = find_catalog_meta_path(run_dir)
+    if meta_path is None:
+        raise FileNotFoundError(
+            f"no {_CATALOG_META_NAME} for run {run_dir.name!r} "
+            f"(expected {run_dir / _CATALOG_META_NAME} or "
+            f"{_analysis_root() / 'results' / run_dir.name / _CATALOG_META_NAME})"
+        )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    center = meta.get("center_run_mv")
+    if center is None:
+        bfit = meta.get("baseline_gaussian_fit") or {}
+        center = bfit.get("center_mV")
+    if center is None or not np.isfinite(float(center)):
+        raise ValueError(f"center_run_mv missing in {meta_path}")
+    ggem_ch = int(meta.get("ggem_channel_id", 1))
+    return float(center), ggem_ch
+
+
 def load_overlay_traces(
     per_ch_csv: PerChannelCsv,
     start_index: int,
     overlay_n: int,
+    *,
+    baseline_mv: float | None = None,
+    ggem_channel_id: int | None = None,
 ) -> tuple[TraceSeries, list[str]]:
     """各 CH で ``overlay_n`` 本まで連続読み込み（時刻 µs, 電圧 mV）。"""
     out: TraceSeries = []
     warnings: list[str] = []
     for ch_id, _csv_dir, paths in per_ch_csv:
         series: list[tuple[Path, np.ndarray, np.ndarray]] = []
+        apply_bcor = (
+            baseline_mv is not None
+            and ggem_channel_id is not None
+            and ch_id == ggem_channel_id
+        )
         for j in range(overlay_n):
             ev = start_index + j
             if ev >= len(paths):
@@ -68,6 +115,8 @@ def load_overlay_traces(
                 t, v = read_waveform_csv(fp)
                 if t.size == 0:
                     raise ValueError("empty waveform")
+                if apply_bcor:
+                    v = np.asarray(v, dtype=float) - float(baseline_mv)
                 series.append((fp, t, v))
             except Exception as exc:
                 warnings.append(f"CH{ch_id} {fp.name}: {exc}")
@@ -153,6 +202,8 @@ def run_interactive(
     n_events: int,
     *,
     overlay_n: int,
+    baseline_mv: float | None = None,
+    ggem_channel_id: int | None = None,
 ) -> None:
     """全 CH 積み上げ波形を ``n`` / ``p`` で切り替える。"""
     if n_events == 0:
@@ -170,7 +221,13 @@ def run_interactive(
 
     def redraw() -> None:
         nonlocal fig
-        traces, warns = load_overlay_traces(per_ch_csv, idx, overlay_n)
+        traces, warns = load_overlay_traces(
+            per_ch_csv,
+            idx,
+            overlay_n,
+            baseline_mv=baseline_mv,
+            ggem_channel_id=ggem_channel_id,
+        )
         for w in warns:
             print(w, file=sys.stderr, flush=True)
         if not traces:
@@ -191,7 +248,10 @@ def run_interactive(
             _paint_axes(axes_arr, traces)
             if overlay_n > 1:
                 axes_arr[0].tick_params(labelbottom=False)
-            fig.suptitle(_page_title(idx, overlay_n, n_events), fontsize=10)
+            title = _page_title(idx, overlay_n, n_events)
+            if baseline_mv is not None and ggem_channel_id is not None:
+                title += f"  bcor CH{ggem_channel_id} −{baseline_mv:.3f} mV"
+            fig.suptitle(title, fontsize=10)
             fig.subplots_adjust(left=0.10, right=0.98, top=0.92, bottom=0.12, hspace=0.08)
             fig.canvas.draw_idle()
 
@@ -225,10 +285,15 @@ def resolve_run_paths(run_dir: Path) -> tuple[PerChannelCsv, int]:
 
 
 def main() -> None:
-    """CLI: ``RUN_DIR`` [``--n N``]。"""
+    """CLI: ``RUN_DIR`` [``--n N``] [``--bcor``]。"""
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--n", type=int, default=1, metavar="N")
+    parser.add_argument(
+        "--bcor",
+        action="store_true",
+        help="Subtract decode baseline (center_run_mv) on GGEM channel from results/",
+    )
     args = parser.parse_args()
 
     if args.n < 1:
@@ -239,8 +304,23 @@ def main() -> None:
         print(f"Not a directory: {run_dir}", file=sys.stderr)
         sys.exit(1)
 
+    baseline_mv: float | None = None
+    ggem_ch: int | None = None
+    if args.bcor:
+        try:
+            baseline_mv, ggem_ch = load_decode_baseline(run_dir)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"[check_waveform] --bcor: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     per_ch_csv, n_events = resolve_run_paths(run_dir)
-    run_interactive(per_ch_csv, n_events, overlay_n=args.n)
+    run_interactive(
+        per_ch_csv,
+        n_events,
+        overlay_n=args.n,
+        baseline_mv=baseline_mv,
+        ggem_channel_id=ggem_ch,
+    )
 
 
 if __name__ == "__main__":
