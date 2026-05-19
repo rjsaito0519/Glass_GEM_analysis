@@ -149,6 +149,27 @@ def signal_samples_by_catalog(
     }
 
 
+def dt_signal_samples_by_catalog(
+    catalog_paths: Sequence[Path],
+) -> dict[str, tuple[list[float], list[float], list[float]]]:
+    """PATH ごとに signal の (dt, integral, vmax) リストを返す。"""
+    out: dict[str, tuple[list[float], list[float], list[float]]] = {}
+    for csv_path in catalog_paths:
+        dt_sig, _, int_sig, max_sig = rows_to_dt_signal_lists(read_catalog_rows(csv_path))
+        if not dt_sig:
+            print(f"[skip] no dt signal rows in {csv_path}", file=sys.stderr, flush=True)
+            continue
+        label = catalog_segment_label(csv_path)
+        if label in out:
+            dt_p, int_p, max_p = out[label]
+            dt_p.extend(dt_sig)
+            int_p.extend(int_sig)
+            max_p.extend(max_sig)
+        else:
+            out[label] = (list(dt_sig), list(int_sig), list(max_sig))
+    return out
+
+
 def rows_to_dt_signal_lists(
     rows: list[dict[str, Any]],
 ) -> tuple[list[float], list[float], list[float], list[float]]:
@@ -566,7 +587,7 @@ def dt_bin_edges_auto(
     s = np.asarray(dt_signal, dtype=float)
     n_arr = np.asarray(dt_noise, dtype=float)
     if s.size == 0 and n_arr.size == 0:
-        return np.linspace(-8000.0, 8000.0, n_bins + 1)
+        return np.linspace(-8.0, 8.0, n_bins + 1)
     allv = np.concatenate([s, n_arr]) if s.size and n_arr.size else (s if s.size else n_arr)
     lo_d, hi_d = float(np.min(allv)), float(np.max(allv))
     span = hi_d - lo_d

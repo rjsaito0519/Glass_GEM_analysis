@@ -6,10 +6,10 @@
 - **`check_waveform.py`** — 全 CH 波形の表示のみ。`n` / `p` / `q`、``--n N``、``--bcor``（GGEM のみ decode ベースライン減算）。
 - **`plot_integ_maxv.py`** — デコード済み `event_catalog.csv` から integral / vmax ヒストグラム。``--same`` で **PATH（results サブディレクトリ）ごと**に重ね（signal のみ、density 正規化、凡例=ディレクトリ名）。
 - **`plot_integ_maxv_corr.py`** — 同一イベントの integral–vmax 2 次元ヒスト（矩形メッシュ、1D hist と同じ bin）。signal / noise を別パネル表示。
-- **`plot_dt_ggem_nim.py`** — `dt_ggem_nim_ns` ヒスト。右クリック 2 回で範囲指定、``w`` でその範囲の integ/max 追従表示。
+- **`plot_dt_ggem_nim.py`** — `dt_ggem_nim_ns` ヒスト（横軸 **µs**）。右クリック 2 回で範囲指定、``w`` でその範囲の integ/max 追従表示。``--same`` で **PATH ごと**に signal Δt を重ね（Scaled counts）。
 - **`plot_trend_sn_spark.py`** — 時間ビンごとの signal 件数・S/N・スパーク率 [/10 min]・**baseline_indiv_mv 平均**（非スパークのみ、``--span`` 分幅、既定 10）。segmented 時は run 全体 ``baseline_mv`` を破線で重ねる。PATH 1 個のみ exp fit。複数 PATH で **1 時間未満**しか空かないときは全行まとめて binning（実時間軸）；**1 時間以上**の空きがあるときだけ run 別 binning＋境界破線＋ギャップ圧縮（区切り約 60 分）。
 - **`merge_event_catalog.py`** — 複数の `event_catalog.csv`（または `results/runXXXX/`）を 1 本に結合。``--out NAME`` で `results/<NAME>/` に出力。
-- **`summarize_runs.py`** — 引数なしで `results/run*/event_catalog.csv` を探索し、signal/noise/spark 件数・測定時間・spark/h・S/N・signal 平均 integ/maxv の表を print。
+- **`summarize_runs.py`** — 引数なしで `results/run*/event_catalog.csv` を探索し、signal/noise/spark 件数・測定時間・spk/10min・S/N・**misc コメント**（`run_dir` 親の `misc/comments.txt`）の表を print。
 
 設定 JSON はリポジトリ直下の **`conf/`**（`--conf` 省略時は `conf/event_catalog.default.json`）。
 
@@ -29,6 +29,7 @@ PYTHONPATH=scripts python3 scripts/plot_integ_maxv.py --same results/run0089 res
 PYTHONPATH=scripts python3 scripts/plot_integ_maxv_corr.py results/run0093
 PYTHONPATH=scripts python3 scripts/plot_integ_maxv_corr.py results/run0097 results/run0098
 PYTHONPATH=scripts python3 scripts/plot_dt_ggem_nim.py results/run0089 --dt-auto
+PYTHONPATH=scripts python3 scripts/plot_dt_ggem_nim.py --same results/295_1st results/run0100 --dt-auto
 PYTHONPATH=scripts python3 scripts/plot_trend_sn_spark.py results/run0089 --span 10
 PYTHONPATH=scripts python3 scripts/plot_trend_sn_spark.py results/run0089 results/run0091 --span 10
 PYTHONPATH=scripts python3 scripts/plot_trend_sn_spark.py results/run0089 results/run0091 --no-compress-gaps
