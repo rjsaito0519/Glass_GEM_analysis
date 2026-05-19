@@ -20,8 +20,12 @@ dev = ["pytest>=7"]
 [project.scripts]
 decode-event-catalog = "modules.event_catalog:main"
 check-waveform = "modules.check_waveform_viewer:main"
-plot-event-catalog = "modules.catalog_hist:main"
+plot-integ-maxv = "modules.catalog_plot_integ_maxv:main"
+plot-integ-maxv-corr = "modules.catalog_plot_integ_maxv_corr:main"
+plot-dt-ggem-nim = "modules.catalog_plot_dt:main"
+plot-trend-sn-spark = "modules.catalog_plot_trend:main"
 merge-event-catalog = "modules.catalog_merge:main"
+summarize-runs = "modules.catalog_run_summary:main"
 
 [tool.setuptools.packages.find]
 where = ["scripts"]

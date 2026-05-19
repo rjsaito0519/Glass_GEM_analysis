@@ -231,6 +231,14 @@ def process_run_to_rows(
             print(f"GGEM {fp.name}: {exc}", file=sys.stderr, flush=True)
             skipped_read_pool += 1
             continue
+        if is_spark_event(
+            t_us,
+            v_mv,
+            threshold_mv=spark_threshold_mv,
+            min_duration_us=spark_min_duration_us,
+            rel_tol_dt=rel_tol_dt,
+        ):
+            continue
         m_out = mean_voltage_outside_window_mv(t_us, v_mv, tmin_us=tmin_us, tmax_us=tmax_us)
         if m_out is not None:
             per_event_mean_outside.append(m_out)

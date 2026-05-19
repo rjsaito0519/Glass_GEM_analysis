@@ -1,0 +1,1 @@
+{"sessionId": "b517b0", "hypothesisId": "A", "location": "catalog_plot_trend.py:plot_trend", "message": "axis sizes before errorbar", "data": {"n_centers": 33, "n_signal": 33, "n_spans": 2, "match": true}, "timestamp": 1779085244695}
